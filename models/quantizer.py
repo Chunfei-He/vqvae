@@ -19,11 +19,14 @@ class VectorQuantizer(nn.Module):
 
     def __init__(self, n_e, e_dim, beta):
         super(VectorQuantizer, self).__init__()
-        self.n_e = n_e
-        self.e_dim = e_dim
-        self.beta = beta
+        self.n_e = n_e       # embedding 向量的个数（即代码簿的大小）
+        self.e_dim = e_dim   # 每个 embedding 向量的维度
+        self.beta = beta     # commitment cost 系数（用于损失函数）
 
+        # 定义一个 Embedding 层，包含 n_e 个 embedding，每个的维度是 e_dim
         self.embedding = nn.Embedding(self.n_e, self.e_dim)
+        
+        # 对 embedding 权重初始化，范围设为 [-1/n_e, 1/n_e]
         self.embedding.weight.data.uniform_(-1.0 / self.n_e, 1.0 / self.n_e)
 
     def forward(self, z):
@@ -41,22 +44,29 @@ class VectorQuantizer(nn.Module):
             2. flatten input to (B*H*W,C)
 
         """
-        # reshape z -> (batch, height, width, channel) and flatten
+        # 1) 先将维度从 (B,C,H,W) -> (B,H,W,C)，然后再展平到 (B*H*W, C)
+        # batch, channel, height, width -> batch, height, width, channel
         z = z.permute(0, 2, 3, 1).contiguous()
         z_flattened = z.view(-1, self.e_dim)
-        # distances from z to embeddings e_j (z - e)^2 = z^2 + e^2 - 2 e * z
 
+        # 2) 计算 z_flattened 与代码簿中每个 embedding 之间的距离
+        #    距离公式: ||z - e||^2 = (z^2 + e^2 - 2 z·e)
+        #    这里 d 的维度会是 (B*H*W, n_e)，表示每个 z 对所有 embedding 的距离。
         d = torch.sum(z_flattened ** 2, dim=1, keepdim=True) + \
             torch.sum(self.embedding.weight**2, dim=1) - 2 * \
             torch.matmul(z_flattened, self.embedding.weight.t())
 
-        # find closest encodings
+        # 3) 找到距离最小的 embedding 索引（即最接近的代码向量）
         min_encoding_indices = torch.argmin(d, dim=1).unsqueeze(1)
+        # 4) 将这些索引转换为 one-hot 编码。比如如果最近的是索引 k，就在对应位置上放 1
+        #    min_encodings 的形状是 (B*H*W, n_e)
         min_encodings = torch.zeros(
             min_encoding_indices.shape[0], self.n_e).to(device)
         min_encodings.scatter_(1, min_encoding_indices, 1)
 
-        # get quantized latent vectors
+        # 5) 根据 one-hot 再和 embedding 权重相乘，得到量化后的向量 z_q
+        #    这里 (B*H*W, n_e) x (n_e, e_dim) => (B*H*W, e_dim)
+        #    再 reshape 回 (B,H,W,e_dim)
         z_q = torch.matmul(min_encodings, self.embedding.weight).view(z.shape)
 
         # compute loss for embedding

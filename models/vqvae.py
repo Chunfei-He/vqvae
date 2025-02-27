@@ -13,14 +13,15 @@ class VQVAE(nn.Module):
         super(VQVAE, self).__init__()
         # encode image into continuous latent space
         self.encoder = Encoder(3, h_dim, n_res_layers, res_h_dim)
+        # 2) 把编码器输出维度映射到 embedding_dim，方便与向量量化模块对接
         self.pre_quantization_conv = nn.Conv2d(
             h_dim, embedding_dim, kernel_size=1, stride=1)
-        # pass continuous latent vector through discretization bottleneck
+        # 3) 经过离散化瓶颈：将连续的 latent 表示转换为离散的 embedding index
         self.vector_quantization = VectorQuantizer(
             n_embeddings, embedding_dim, beta)
-        # decode the discrete latent representation
+        # 4) 使用解码器，将离散的 latent 表示恢复为原图
         self.decoder = Decoder(embedding_dim, h_dim, n_res_layers, res_h_dim)
-
+        # 5) 可选：如果需要记录每张图像在量化时选到哪些 embedding，就启用映射表
         if save_img_embedding_map:
             self.img_to_embedding_map = {i: [] for i in range(n_embeddings)}
         else:
